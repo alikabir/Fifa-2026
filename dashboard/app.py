@@ -246,6 +246,18 @@ def style_probability_table(frame: pd.DataFrame) -> pd.io.formats.style.Styler:
     )
 
 
+def probability_table_config() -> dict:
+    return {
+        "team": st.column_config.TextColumn("Team", width="medium"),
+        "round_of_32": st.column_config.ProgressColumn("R32", format="%.1%", min_value=0, max_value=1),
+        "round_of_16": st.column_config.ProgressColumn("R16", format="%.1%", min_value=0, max_value=1),
+        "quarterfinal": st.column_config.ProgressColumn("QF", format="%.1%", min_value=0, max_value=1),
+        "semifinal": st.column_config.ProgressColumn("SF", format="%.1%", min_value=0, max_value=1),
+        "final": st.column_config.ProgressColumn("Final", format="%.1%", min_value=0, max_value=1),
+        "champion": st.column_config.ProgressColumn("Win", format="%.1%", min_value=0, max_value=1),
+    }
+
+
 def outcome_chart(prob_df: pd.DataFrame):
     colors = ["#48c78e", "#f4c95d", "#ff6b6b"]
     fig = px.bar(
@@ -532,20 +544,31 @@ with tab_simulation:
     metrics[3].metric("Semifinal odds", percent(float(leader["semifinal"])))
     metrics[4].metric("Runs", f"{simulations:,}")
 
-    chart_col, funnel_col = st.columns([2, 1])
-    with chart_col:
-        st.plotly_chart(champion_chart(probabilities), use_container_width=True)
-    with funnel_col:
-        selected_team = st.selectbox(
-            "Team path",
-            probabilities["team"].tolist(),
-            index=0,
-            key="simulation_team_path",
-        )
-        row = probabilities.loc[probabilities["team"] == selected_team].iloc[0]
-        st.plotly_chart(stage_funnel(row), use_container_width=True)
+    probability_cols = ["round_of_32", "round_of_16", "quarterfinal", "semifinal", "final", "champion"]
+    table_view = probabilities[["team", *probability_cols]].copy()
+    st.markdown('<div class="section-title">Full Probability Table</div>', unsafe_allow_html=True)
+    st.dataframe(
+        table_view,
+        use_container_width=True,
+        hide_index=True,
+        height=650,
+        column_config=probability_table_config(),
+    )
 
-    st.dataframe(style_probability_table(probabilities), use_container_width=True, hide_index=True)
+    selected_team = st.selectbox(
+        "Inspect team path",
+        probabilities["team"].tolist(),
+        index=0,
+        key="simulation_team_path",
+    )
+    row = probabilities.loc[probabilities["team"] == selected_team].iloc[0]
+    detail_cols = st.columns(6)
+    detail_cols[0].metric("R32", percent(float(row["round_of_32"])))
+    detail_cols[1].metric("R16", percent(float(row["round_of_16"])))
+    detail_cols[2].metric("QF", percent(float(row["quarterfinal"])))
+    detail_cols[3].metric("SF", percent(float(row["semifinal"])))
+    detail_cols[4].metric("Final", percent(float(row["final"])))
+    detail_cols[5].metric("Win", percent(float(row["champion"])))
 
 with tab_bracket:
     st.markdown('<div class="section-title">Bracket Projection</div>', unsafe_allow_html=True)
