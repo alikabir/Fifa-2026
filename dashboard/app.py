@@ -14,6 +14,9 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from wc2026_predictor.config import MODEL_DIR, PROCESSED_DIR, TOURNAMENT_DIR
+from wc2026_predictor.config import RESULTS_URL
+from wc2026_predictor.data_pipeline import clean_matches
+from wc2026_predictor.features import final_team_states
 from wc2026_predictor.predict import MatchPredictor
 from wc2026_predictor.simulator import WorldCupSimulator
 
@@ -167,6 +170,15 @@ def load_groups() -> pd.DataFrame:
     return pd.read_csv(TOURNAMENT_DIR / "worldcup_2026_groups.csv")
 
 
+@st.cache_data(ttl=3600, show_spinner="Refreshing latest public match data...")
+def load_live_team_states() -> tuple[pd.DataFrame, pd.Timestamp]:
+    raw = pd.read_csv(RESULTS_URL)
+    matches = clean_matches(raw)
+    states = final_team_states(matches)
+    latest_match_date = matches["date"].max()
+    return states, latest_match_date
+
+
 groups = load_groups()
 teams = sorted(groups["team"].unique())
 
@@ -175,6 +187,23 @@ if not models_ready():
     st.stop()
 
 predictor = load_predictor()
+
+with st.sidebar:
+    st.markdown("### Data Mode")
+    live_mode = st.toggle("Use latest public match data", value=True)
+    if live_mode:
+        live_states, latest_match_date = load_live_team_states()
+        predictor.states = live_states
+        st.success(f"Updated through {latest_match_date.date()}")
+        if st.button("Refresh now"):
+            load_live_team_states.clear()
+            st.rerun()
+    else:
+        st.info("Using committed model artifacts.")
+    st.caption(
+        "Live mode refreshes rolling team state from the public results dataset. "
+        "The trained model itself is not retrained in the web app."
+    )
 
 
 def percent(value: float) -> str:
