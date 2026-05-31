@@ -17,6 +17,7 @@ from wc2026_predictor.config import MODEL_DIR, PROCESSED_DIR, TOURNAMENT_DIR
 from wc2026_predictor.config import RESULTS_URL
 from wc2026_predictor.data_pipeline import clean_matches
 from wc2026_predictor.features import final_team_states
+from wc2026_predictor.live_worldcup_api import WorldCupApiClient, completed_games_as_matches
 from wc2026_predictor.predict import MatchPredictor
 from wc2026_predictor.simulator import WorldCupSimulator
 
@@ -171,12 +172,28 @@ def load_groups() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600, show_spinner="Refreshing latest public match data...")
-def load_live_team_states() -> tuple[pd.DataFrame, pd.Timestamp]:
+def load_live_team_states(include_world_cup_api: bool = True) -> tuple[pd.DataFrame, pd.Timestamp, int]:
     raw = pd.read_csv(RESULTS_URL)
     matches = clean_matches(raw)
+    api_match_count = 0
+    if include_world_cup_api:
+        try:
+            api_games = WorldCupApiClient().games()
+            api_matches = completed_games_as_matches(api_games)
+            api_match_count = len(api_matches)
+            if api_match_count:
+                matches = pd.concat([matches, api_matches], ignore_index=True).sort_values("date")
+        except Exception:
+            api_match_count = 0
     states = final_team_states(matches)
     latest_match_date = matches["date"].max()
-    return states, latest_match_date
+    return states, latest_match_date, api_match_count
+
+
+@st.cache_data(ttl=900, show_spinner="Loading World Cup API...")
+def load_worldcup_api_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    client = WorldCupApiClient()
+    return client.games(), client.groups(), client.teams()
 
 
 groups = load_groups()
@@ -191,12 +208,16 @@ predictor = load_predictor()
 with st.sidebar:
     st.markdown("### Data Mode")
     live_mode = st.toggle("Use latest public match data", value=True)
+    use_worldcup_api = st.toggle("Include World Cup API", value=True)
     if live_mode:
-        live_states, latest_match_date = load_live_team_states()
+        live_states, latest_match_date, api_match_count = load_live_team_states(use_worldcup_api)
         predictor.states = live_states
         st.success(f"Updated through {latest_match_date.date()}")
+        if use_worldcup_api:
+            st.caption(f"World Cup API completed matches included: {api_match_count}")
         if st.button("Refresh now"):
             load_live_team_states.clear()
+            load_worldcup_api_data.clear()
             st.rerun()
     else:
         st.info("Using committed model artifacts.")
@@ -299,8 +320,8 @@ def stage_funnel(team_row: pd.Series):
     )
     return fig
 
-tab_match, tab_rankings, tab_simulation, tab_bracket = st.tabs(
-    ["Match Center", "Power Rankings", "Tournament Odds", "Bracket"]
+tab_match, tab_live, tab_rankings, tab_simulation, tab_bracket = st.tabs(
+    ["Match Center", "Live Feed", "Power Rankings", "Tournament Odds", "Bracket"]
 )
 
 with tab_match:
@@ -363,6 +384,80 @@ with tab_match:
             display = prob_df.copy()
             display["Probability"] = display["Probability"].map(percent)
             st.dataframe(display, use_container_width=True, hide_index=True)
+
+with tab_live:
+    st.markdown('<div class="section-title">World Cup API Feed</div>', unsafe_allow_html=True)
+    st.caption("Live schedule, scores, teams, and group tables from the public World Cup 2026 API.")
+    try:
+        api_games, api_groups, api_teams = load_worldcup_api_data()
+        live_metrics = st.columns(4)
+        live_metrics[0].metric("Matches", f"{len(api_games)}")
+        live_metrics[1].metric("Finished", f"{int(api_games['finished'].sum()) if not api_games.empty else 0}")
+        live_metrics[2].metric("Teams", f"{len(api_teams)}")
+        live_metrics[3].metric("Groups", f"{api_groups['group'].nunique() if not api_groups.empty else 0}")
+
+        match_filter = st.segmented_control(
+            "Matches",
+            ["All", "Upcoming", "Finished"],
+            default="Upcoming",
+        )
+        games_view = api_games.copy()
+        if match_filter == "Upcoming":
+            games_view = games_view[~games_view["finished"]]
+        elif match_filter == "Finished":
+            games_view = games_view[games_view["finished"]]
+        games_view = games_view[
+            [
+                "id",
+                "type",
+                "group",
+                "matchday",
+                "local_date",
+                "home_team_name_en",
+                "home_score",
+                "away_score",
+                "away_team_name_en",
+                "finished",
+                "time_elapsed",
+            ]
+        ].rename(
+            columns={
+                "id": "Match",
+                "type": "Type",
+                "group": "Group",
+                "matchday": "Matchday",
+                "local_date": "Kickoff",
+                "home_team_name_en": "Home",
+                "home_score": "Home score",
+                "away_score": "Away score",
+                "away_team_name_en": "Away",
+                "finished": "Finished",
+                "time_elapsed": "Status",
+            }
+        )
+        st.dataframe(games_view, use_container_width=True, hide_index=True)
+
+        st.markdown('<div class="section-title">Group Standings</div>', unsafe_allow_html=True)
+        group_choice = st.selectbox("Group", sorted(api_groups["group"].unique()) if not api_groups.empty else [])
+        group_table = api_groups[api_groups["group"] == group_choice][
+            ["team", "mp", "w", "d", "l", "pts", "gf", "ga", "gd"]
+        ].rename(
+            columns={
+                "team": "Team",
+                "mp": "MP",
+                "w": "W",
+                "d": "D",
+                "l": "L",
+                "pts": "Pts",
+                "gf": "GF",
+                "ga": "GA",
+                "gd": "GD",
+            }
+        )
+        st.dataframe(group_table, use_container_width=True, hide_index=True)
+    except Exception as exc:
+        st.error("Could not reach the World Cup API right now.")
+        st.caption(str(exc))
 
 with tab_rankings:
     st.markdown('<div class="section-title">Power Rankings</div>', unsafe_allow_html=True)
