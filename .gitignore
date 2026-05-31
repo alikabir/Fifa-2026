@@ -7,3 +7,6 @@ data/processed/*.parquet
 models/*.joblib
 models/*.json
 .streamlit/
+!data/processed/team_states.parquet
+!models/*.joblib
+!models/*.json

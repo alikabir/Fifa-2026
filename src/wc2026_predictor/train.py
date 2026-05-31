@@ -6,6 +6,7 @@ import joblib
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import Ridge
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, StandardScaler
@@ -59,8 +60,9 @@ def train_match_models(features: pd.DataFrame) -> pd.DataFrame:
             ]
         ),
         "random_forest": RandomForestClassifier(
-            n_estimators=500,
-            min_samples_leaf=8,
+            n_estimators=120,
+            max_depth=12,
+            min_samples_leaf=20,
             class_weight="balanced_subsample",
             random_state=RANDOM_STATE,
             n_jobs=-1,
@@ -72,10 +74,10 @@ def train_match_models(features: pd.DataFrame) -> pd.DataFrame:
     labels = list(range(len(label_encoder.classes_)))
     for name, model in models.items():
         model.fit(X_train, y_train)
-        joblib.dump(model, MODEL_DIR / f"{name}.joblib")
+        joblib.dump(model, MODEL_DIR / f"{name}.joblib", compress=3)
         metrics.append(evaluate_classifier(name, model, X_test, y_test, labels))
 
-    joblib.dump(label_encoder, MODEL_DIR / "label_encoder.joblib")
+    joblib.dump(label_encoder, MODEL_DIR / "label_encoder.joblib", compress=3)
     metrics_df = pd.DataFrame(metrics).sort_values(["log_loss", "calibration_ece"])
     metrics_df.to_json(MODEL_DIR / "classification_metrics.json", orient="records", indent=2)
     return metrics_df
@@ -84,19 +86,17 @@ def train_match_models(features: pd.DataFrame) -> pd.DataFrame:
 def train_expected_goals_model(features: pd.DataFrame):
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     train_df, test_df = _chronological_split(features)
-    model = MultiOutputRegressor(
-        RandomForestRegressor(
-            n_estimators=500,
-            min_samples_leaf=5,
-            random_state=RANDOM_STATE,
-            n_jobs=-1,
-        )
+    model = Pipeline(
+        [
+            ("scale", StandardScaler()),
+            ("model", MultiOutputRegressor(Ridge(alpha=2.0, random_state=RANDOM_STATE))),
+        ]
     )
     model.fit(train_df[MODEL_FEATURES], train_df[["home_score", "away_score"]])
     predictions = model.predict(test_df[MODEL_FEATURES]).clip(0, None)
     mae_home = abs(predictions[:, 0] - test_df["home_score"].to_numpy()).mean()
     mae_away = abs(predictions[:, 1] - test_df["away_score"].to_numpy()).mean()
-    joblib.dump(model, MODEL_DIR / "expected_goals.joblib")
+    joblib.dump(model, MODEL_DIR / "expected_goals.joblib", compress=3)
     metrics = {"home_goals_mae": float(mae_home), "away_goals_mae": float(mae_away)}
     (MODEL_DIR / "expected_goals_metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     return metrics

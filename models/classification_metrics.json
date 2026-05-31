@@ -1,0 +1,23 @@
+[
+  {
+    "model":"xgboost",
+    "accuracy":0.5967316281,
+    "log_loss":0.8765720037,
+    "brier_score":0.515580505,
+    "calibration_ece":0.012696691
+  },
+  {
+    "model":"logistic_regression",
+    "accuracy":0.5711530654,
+    "log_loss":0.9036014767,
+    "brier_score":0.5332596177,
+    "calibration_ece":0.0451643246
+  },
+  {
+    "model":"random_forest",
+    "accuracy":0.5672959805,
+    "log_loss":0.9094906844,
+    "brier_score":0.5370901663,
+    "calibration_ece":0.0519496702
+  }
+]
